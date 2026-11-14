@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "reviewed_on": "2026-11-14",
+  "projects": {
+    "pcalc-express": {
+      "repository": "https://github.com/richyo-codes/pcalc-express.git",
+      "branch": "main",
+      "revision": "8c8940fc2ddf492358e94884930f3067b232b0b5",
+      "license": "AGPL-3.0-only",
+      "source_recipe": "pcalc-express-source",
+      "yocto_status": "source-tracked; desktop application build pending",
+      "runners": ["gtk3", "gtk4"],
+      "dart_sdk_constraint": "^3.13.0",
+      "git_dependencies": {
+        "url_launcher_linux": {
+          "repository": "https://github.com/richyo-codes/packages.git",
+          "path": "packages/url_launcher/url_launcher_linux",
+          "revision": "1291cce9b9c86c48015e1f95a1875252a6e0d375"
+        },
+        "dart_clang_constexpr": {
+          "repository": "https://github.com/richyo-codes/clang-constexpr.dart.git",
+          "revision": "483cd8144573cc3b0975c285ad2e34013191dee6"
+        },
+        "tinyexpr_plusplus_ffi": {
+          "repository": "https://github.com/richyo-codes/tinyexpr-plusplus-ffi.dart.git",
+          "revision": "dc249624c25226406b527a967144e5acf463d0e8"
+        }
+      },
+      "upstream_documented_gtk4_toolchain": {
+        "framework_revision": "e95aed6a2a35bdcc2242d944e08267b78f9ea317",
+        "prebuilt_engine_id": "e0462bb4b7f33fb7bf4c59ba2a73cfa1d0385ce1",
+        "status": "upstream CI configuration; not validated in Yocto"
+      }
+    },
+    "flutter-gtk4": {
+      "repository": "https://github.com/richyo-codes/flutter.git",
+      "branch": "3.48.0-gtk4.issue94804.20260925",
+      "revision": "5cdfc3d358c9638ffd135ad1b32a41086096b267",
+      "license": "BSD-3-Clause",
+      "source_recipe": "flutter-gtk4-source",
+      "pull_request": "https://github.com/flutter/flutter/pull/193405",
+      "pull_request_status_at_review": "open draft",
+      "yocto_status": "source-tracked; matched GTK4 engine/SDK build pending",
+      "build_option": "--linux-gtk=gtk4"
+    },
+    "moosh-revolt": {
+      "repository": "https://github.com/richyo-codes/moosh-revolt-multimeter.git",
+      "revision": "e37be6621f02fd6303f9ae67006a7e57f826f532",
+      "recipe": "moosh-revolt",
+      "recipe_layer": "meta-embedded-images",
+      "yocto_status": "flutter-pi QEMU rendering verified; physical board validation pending"
+    }
+  }
+}
