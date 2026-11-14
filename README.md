@@ -58,6 +58,12 @@ Wayland compositor; verify the binary loads GTK4 without GTK3 and that native
 plugins and expression evaluation work before adding ARM64 board images.
 No GTK4 image or pcalc executable is supplied by this initial tracking layer.
 
+[Remote UI options](remote-ui.md) compares web/Wasm with native WayVNC access
+and identifies the additional runtime/backend integration each requires.
+
+[MooshRevolt operator configuration](operator-config.md) enables a tested,
+opt-in startup-config backport for the existing pinned app recipe.
+
 Keep application recipes here, image composition in `meta-embedded-images`,
 and board support in the existing BSP layers. Keep independently upstreamable
 meta-flutter or engine fixes separate from personal application integration.

@@ -1,0 +1,1068 @@
+From: Rich Young <richyo-codes@users.noreply.github.com>
+Subject: [PATCH] Add operator startup configuration and address-bound autoconnect
+
+Backport of app-side configuration and regression fixes, coordinated with the
+MooshRevolt agent. Applies to e37be6621f02fd6303f9ae67006a7e57f826f532.
+Tests: Flutter 3.44.9 analyze; full suite (42 tests).
+
+Upstream-Status: Pending [local app implementation; awaiting publication]
+
+diff --git a/lib/main.dart b/lib/main.dart
+index 65ec2b6..2a94d31 100644
+--- a/lib/main.dart
++++ b/lib/main.dart
+@@ -7,6 +7,7 @@ import 'package:moosh_revolt/screens/settings_screen.dart';
+ import 'package:moosh_revolt/screens/about_screen.dart';
+ import 'package:mooshimeter_ble/mooshimeter_ble.dart';
+ import 'package:moosh_revolt/services/settings_service.dart';
++import 'package:moosh_revolt/services/startup_autoconnect.dart';
+ import 'package:moosh_revolt/services/mock_ble_provider.dart';
+ 
+ // --- Shared service instances & navigation key ---
+@@ -99,6 +100,7 @@ class HomePage extends StatefulWidget {
+ 
+ class _HomePageState extends State<HomePage> {
+   BleDevice? _connectedDevice;
++  bool _startupDiscovery = false;
+ 
+   // --- Home page logging ---
+   final String _homeLogPrefix = '[HOME]';
+@@ -107,121 +109,32 @@ class _HomePageState extends State<HomePage> {
+   @override
+   void initState() {
+     super.initState();
++    _startupDiscovery = widget.enableBle && !widget.mockMode;
+     _homeLog('initState — calling _tryAutoConnect');
+     WidgetsBinding.instance.addPostFrameCallback((_) {
+-      if (!widget.enableBle) return;
++      if (!_startupDiscovery) return;
+       _homeLog('addPostFrameCallback — starting auto-connect');
+-      _tryAutoConnect();
++      _tryAutoConnect().whenComplete(() {
++        if (mounted) setState(() => _startupDiscovery = false);
++      });
+     });
+   }
+ 
+-  /// Attempt to auto-connect to a remembered or already-connected device on app launch.
++  /// Attempt to connect only to an enabled, remembered address on launch.
+   Future<void> _tryAutoConnect() async {
+-    _homeLog('>>> _tryAutoConnect START');
+-    if (!mounted) {
+-      _homeLog('    not mounted, aborting');
+-      return;
+-    }
+-
+-    final settings = context.read<SettingsProvider>();
+-    _homeLog(
+-      '    autoConnect=${settings.autoConnect} rememberedCount=${settings.rememberedDeviceCount}',
+-    );
+-    if (!settings.autoConnect) {
+-      _homeLog('    autoConnect disabled, aborting');
+-      return;
+-    }
+-
+-    // Step 1: Check for already-connected Mooshimeter devices
+-    _homeLog('>>> Step 1: checking already-connected devices');
++    if (!mounted) return;
+     try {
+-      final connectedDevices = await UniversalBle.getSystemDevices(
+-        withServices: [],
+-      );
+-      _homeLog(
+-        '    connectedDevices returned, count=${connectedDevices.length}',
++      final device = await findStartupDevice(
++        settings: context.read<SettingsProvider>(),
++        systemDevices: () => UniversalBle.getSystemDevices(withServices: []),
++        scanStream: UniversalBle.scanStream,
++        startScan: () => UniversalBle.startScan(),
++        stopScan: UniversalBle.stopScan,
+       );
+-
+-      for (final device in connectedDevices) {
+-        final name = (device.name ?? '').toLowerCase();
+-        _homeLog('      checking: "${device.name}" addr=${device.deviceId}');
+-        if (name.contains('mooshimeter') || name.contains('mooshim')) {
+-          _homeLog('    ✓ BLE MOOSHIIMETER DETECTED: ${device.name}');
+-          // Verify this device is remembered before auto-navigating
+-          final remembered = settings.getRemembered(device.deviceId);
+-          _homeLog('      remembered=${remembered != null}');
+-          if (remembered != null) {
+-            _homeLog('    ✓ remembered, calling _doConnect');
+-            await _doConnect(device);
+-            _homeLog('<<< _tryAutoConnect (via connected)');
+-            return;
+-          }
+-        }
+-      }
+-      _homeLog('    no mooshimeter in connectedDevices');
+-    } catch (e) {
+-      _homeLog('>>> Step 1 FAILED: $e');
+-    }
+-
+-    // Step 2: Fall back to scanning for remembered devices
+-    _homeLog('>>> Step 2: scanning for remembered devices');
+-    if (settings.rememberedDeviceCount == 0) {
+-      _homeLog('    no remembered devices, aborting');
+-      _homeLog('<<< _tryAutoConnect (no remembered devices)');
+-      return;
+-    }
+-
+-    final remembered = settings.getFirstRemembered();
+-    if (remembered == null) {
+-      _homeLog('    getFirstRemembered returned null');
+-      _homeLog('<<< _tryAutoConnect (null remembered)');
+-      return;
++      if (device != null && mounted) await _doConnect(device);
++    } catch (error) {
++      _homeLog('Startup discovery failed: $error');
+     }
+-
+-    _homeLog('    remembered=${remembered.name} addr=${remembered.address}');
+-
+-    BleDevice? found;
+-    try {
+-      _homeLog('    stopping any existing scan');
+-      await UniversalBle.stopScan().catchError((_) {});
+-      await Future.delayed(const Duration(milliseconds: 300));
+-
+-      _homeLog('    starting scan (5s)');
+-      await UniversalBle.startScan();
+-
+-      _homeLog('    scanning...');
+-      await for (final bleDevice in UniversalBle.scanStream) {
+-        final addr = bleDevice.deviceId.toLowerCase();
+-        final name = (bleDevice.name ?? '').toLowerCase();
+-        final target = remembered.address.toLowerCase();
+-
+-        _homeLog(
+-          '      checking: "${bleDevice.name}" addr="$addr" match=${addr == target}',
+-        );
+-
+-        if (addr == target ||
+-            name.contains(remembered.name.toLowerCase().split(' ').first) ||
+-            name.contains('mooshim')) {
+-          _homeLog('    ✓ MATCH FOUND!');
+-          found = bleDevice;
+-          break;
+-        }
+-      }
+-      _homeLog('    scan loop ended, found=${found != null}');
+-    } catch (e) {
+-      _homeLog('>>> Step 2 FAILED: $e');
+-    } finally {
+-      _homeLog('    cleanup: stopping scan');
+-      await UniversalBle.stopScan().catchError((_) {});
+-    }
+-
+-    if (found != null) {
+-      _homeLog('    calling _doConnect');
+-      await _doConnect(found);
+-    } else {
+-      _homeLog('>>> _tryAutoConnect FAILED: no device found');
+-    }
+-    _homeLog('<<< _tryAutoConnect END');
+   }
+ 
+   Future<bool> _doConnect(BleDevice device) async {
+@@ -285,6 +198,11 @@ class _HomePageState extends State<HomePage> {
+     if (widget.mockMode) {
+       return DeviceScreen(device: mockBleProvider!.device);
+     }
++    // Discovery owns the BLE scan until its deadline. Do not mount ScanScreen
++    // yet: its automatic/manual scan would compete with startup discovery.
++    if (_startupDiscovery) {
++      return const Scaffold(body: Center(child: CircularProgressIndicator()));
++    }
+     return ScanScreen(
+       onDeviceSelected: _onDeviceSelected,
+       connectedDevice: _connectedDevice,
+diff --git a/lib/services/settings_service.dart b/lib/services/settings_service.dart
+index 412be90..7885555 100644
+--- a/lib/services/settings_service.dart
++++ b/lib/services/settings_service.dart
+@@ -2,6 +2,7 @@ import 'dart:convert';
+ import 'package:shared_preferences/shared_preferences.dart';
+ import 'package:flutter/material.dart';
+ import 'package:moosh_revolt/models/remembered_device.dart';
++import 'package:moosh_revolt/services/startup_config.dart';
+ 
+ /// Manages app-wide settings using [shared_preferences].
+ /// Extends [ChangeNotifier] so screens can [context.watch] settings
+@@ -19,6 +20,7 @@ class SettingsProvider extends ChangeNotifier {
+ 
+   // --- Remembered Devices ---
+   List<RememberedDevice> _rememberedDevices = [];
++  bool _operatorDeviceList = false;
+ 
+   // --- Getters ---
+ 
+@@ -34,7 +36,9 @@ class SettingsProvider extends ChangeNotifier {
+ 
+   // --- Initialization ---
+ 
+-  Future<void> init() async {
++  Future<void> init({StartupConfig? configuration}) async {
++    // Invalid operator configuration must not fall back to saved meter targets.
++    final config = configuration ?? await StartupConfig.load();
+     _prefs = await SharedPreferences.getInstance();
+ 
+     _autoConnect = _prefs?.getBool('autoconnect') ?? true;
+@@ -45,6 +49,7 @@ class SettingsProvider extends ChangeNotifier {
+     _showFloatingReadings = _prefs?.getBool('show_floating_readings') ?? false;
+ 
+     // Load remembered devices
++    _rememberedDevices = [];
+     final raw = _prefs?.getString('remembered_devices');
+     if (raw != null && raw.isNotEmpty) {
+       try {
+@@ -58,6 +63,16 @@ class SettingsProvider extends ChangeNotifier {
+       }
+     }
+ 
++    final values = config.values;
++    _autoConnect = values['autoConnect'] as bool? ?? _autoConnect;
++    _skipUpgrade = values['skipUpgrade'] as bool? ?? _skipUpgrade;
++    _sampleRate = values['sampleRateHz'] as int? ?? _sampleRate;
++    _graphMaxPoints = values['graphMaxPoints'] as int? ?? _graphMaxPoints;
++    _darkMode = values['darkMode'] as bool? ?? _darkMode;
++    _showFloatingReadings =
++        values['showFloatingReadings'] as bool? ?? _showFloatingReadings;
++    _operatorDeviceList = config.rememberedDevices != null;
++    _rememberedDevices = config.rememberedDevices ?? _rememberedDevices;
+     notifyListeners();
+   }
+ 
+@@ -107,17 +122,19 @@ class SettingsProvider extends ChangeNotifier {
+   // --- Remembered Device Helpers ---
+ 
+   bool isRemembered(String address) {
+-    return _rememberedDevices.any((d) => d.address == address);
++    return getRemembered(address) != null;
+   }
+ 
+   RememberedDevice? getRemembered(String address) {
+-    return _rememberedDevices.where((d) => d.address == address).firstOrNull;
++    return _rememberedDevices
++        .where((d) => d.address.toLowerCase() == address.toLowerCase())
++        .firstOrNull;
+   }
+ 
+   /// Remember a device. If already remembered, updates the name.
+   Future<bool> rememberDevice(String address, String name) async {
+     final existingIdx = _rememberedDevices.indexWhere(
+-      (d) => d.address == address,
++      (d) => d.address.toLowerCase() == address.toLowerCase(),
+     );
+ 
+     if (existingIdx >= 0) {
+@@ -144,13 +161,17 @@ class SettingsProvider extends ChangeNotifier {
+ 
+   /// Unremember a device by address.
+   Future<bool> unrememberDevice(String address) async {
+-    _rememberedDevices.removeWhere((d) => d.address == address);
++    _rememberedDevices.removeWhere(
++      (d) => d.address.toLowerCase() == address.toLowerCase(),
++    );
+     return _persistRememberedDevices();
+   }
+ 
+   /// Toggle autoConnect flag for a remembered device.
+   Future<bool> toggleDeviceAutoConnect(String address) async {
+-    final idx = _rememberedDevices.indexWhere((d) => d.address == address);
++    final idx = _rememberedDevices.indexWhere(
++      (d) => d.address.toLowerCase() == address.toLowerCase(),
++    );
+     if (idx < 0) return false;
+ 
+     final dev = _rememberedDevices[idx];
+@@ -164,6 +185,12 @@ class SettingsProvider extends ChangeNotifier {
+   }
+ 
+   Future<bool> _persistRememberedDevices() async {
++    // Connecting automatically calls rememberDevice. Never copy the operator's
++    // list (including UI edits to it) into the user's saved device preferences.
++    if (_operatorDeviceList) {
++      notifyListeners();
++      return true;
++    }
+     if (_prefs == null) return false;
+     final jsonList = _rememberedDevices.map((d) => d.toJson()).toList();
+     final success = await _prefs!.setString(
+@@ -189,11 +216,6 @@ class SettingsProvider extends ChangeNotifier {
+ 
+   /// Get the first remembered device (for auto-connect).
+   RememberedDevice? getFirstRemembered() {
+-    if (_rememberedDevices.isEmpty) return null;
+-    // Prefer one marked autoConnect, otherwise the first one
+-    return _rememberedDevices.firstWhere(
+-      (d) => d.autoConnect,
+-      orElse: () => _rememberedDevices.first,
+-    );
++    return _rememberedDevices.where((d) => d.autoConnect).firstOrNull;
+   }
+ }
+diff --git a/lib/services/startup_autoconnect.dart b/lib/services/startup_autoconnect.dart
+new file mode 100644
+index 0000000..8843c57
+--- /dev/null
++++ b/lib/services/startup_autoconnect.dart
+@@ -0,0 +1,61 @@
++import 'dart:async';
++
++import 'package:moosh_revolt/services/settings_service.dart';
++import 'package:universal_ble/universal_ble.dart';
++
++/// Finds only explicitly remembered, enabled targets; device names are labels.
++/// Injected transport operations let tests exercise scan timing without BLE.
++Future<BleDevice?> findStartupDevice({
++  required SettingsProvider settings,
++  required Future<List<BleDevice>> Function() systemDevices,
++  required Stream<BleDevice> scanStream,
++  required Future<void> Function() startScan,
++  required Future<void> Function() stopScan,
++  Duration scanTimeout = const Duration(seconds: 5),
++}) async {
++  final targets = settings.rememberedDevices
++      .where((device) => device.autoConnect)
++      .map((device) => device.address.toLowerCase())
++      .toSet();
++  if (!settings.autoConnect || targets.isEmpty) return null;
++  bool matches(BleDevice device) =>
++      targets.contains(device.deviceId.toLowerCase());
++
++  try {
++    final connected = await systemDevices().timeout(scanTimeout);
++    for (final device in connected) {
++      if (matches(device)) return device;
++    }
++  } catch (_) {
++    // Some platforms do not expose system devices. Discovery can still work.
++  }
++
++  final found = Completer<BleDevice?>();
++  // Subscribe before starting discovery, including synchronously emitted events.
++  final subscription = scanStream.listen(
++    (device) {
++      if (!found.isCompleted && matches(device)) found.complete(device);
++    },
++    onError: (Object error, StackTrace trace) {
++      if (!found.isCompleted) found.completeError(error, trace);
++    },
++    onDone: () {
++      if (!found.isCompleted) found.complete(null);
++    },
++  );
++  try {
++    // One overall deadline: unrelated advertisements must not extend the scan.
++    final result = await Future.wait<Object?>([
++      Future<void>.sync(startScan),
++      found.future,
++    ], eagerError: true).timeout(scanTimeout, onTimeout: () => [null, null]);
++    return result[1] as BleDevice?;
++  } finally {
++    await subscription.cancel();
++    try {
++      await stopScan().timeout(scanTimeout);
++    } catch (_) {
++      // Always release our listener, even when the platform cannot stop a scan.
++    }
++  }
++}
+diff --git a/lib/services/startup_config.dart b/lib/services/startup_config.dart
+new file mode 100644
+index 0000000..c2f960d
+--- /dev/null
++++ b/lib/services/startup_config.dart
+@@ -0,0 +1,131 @@
++import 'dart:convert';
++
++import 'package:moosh_revolt/models/remembered_device.dart';
++
++import 'startup_config_stub.dart'
++    if (dart.library.io) 'startup_config_io.dart'
++    as platform;
++
++/// Validated operator overrides, applied after saved preferences at startup.
++class StartupConfig {
++  StartupConfig._(this.values);
++
++  final Map<String, dynamic> values;
++
++  static Future<StartupConfig> load({String? path}) async {
++    final text = await platform.readStartupConfig(path: path);
++    return parse(text == null ? <String, dynamic>{} : jsonDecode(text));
++  }
++
++  static StartupConfig parse(dynamic input) {
++    if (input is! Map || input.keys.any((key) => key is! String)) {
++      throw const FormatException('configuration must be a JSON object');
++    }
++    const keys = {
++      'schemaVersion',
++      'autoConnect',
++      'skipUpgrade',
++      'sampleRateHz',
++      'graphMaxPoints',
++      'darkMode',
++      'showFloatingReadings',
++      'rememberedDevices',
++    };
++    for (final key in input.keys) {
++      if (!keys.contains(key)) throw FormatException('unknown setting: $key');
++    }
++    if (input.containsKey('schemaVersion') &&
++        (input['schemaVersion'] is! int || input['schemaVersion'] != 1)) {
++      throw const FormatException(
++        'unsupported schemaVersion; expected integer 1',
++      );
++    }
++    for (final key in [
++      'autoConnect',
++      'skipUpgrade',
++      'darkMode',
++      'showFloatingReadings',
++    ]) {
++      if (input.containsKey(key) && input[key] is! bool) {
++        throw FormatException('$key must be a boolean');
++      }
++    }
++    if (input.containsKey('sampleRateHz') &&
++        (input['sampleRateHz'] is! int ||
++            ![
++              125,
++              250,
++              500,
++              1000,
++              2000,
++              4000,
++              8000,
++            ].contains(input['sampleRateHz']))) {
++      throw const FormatException('unsupported sampleRateHz');
++    }
++    if (input.containsKey('graphMaxPoints') &&
++        (input['graphMaxPoints'] is! int ||
++            input['graphMaxPoints'] < 2 ||
++            input['graphMaxPoints'] > 100000)) {
++      throw const FormatException(
++        'graphMaxPoints must be between 2 and 100000',
++      );
++    }
++    final values = Map<String, dynamic>.from(input);
++    if (input.containsKey('rememberedDevices')) {
++      final devices = input['rememberedDevices'];
++      if (devices is! List) {
++        throw const FormatException('rememberedDevices must be an array');
++      }
++      final addresses = <String>{};
++      final normalized = <Map<String, dynamic>>[];
++      for (final device in devices) {
++        if (device is! Map<String, dynamic> ||
++            device.keys.any(
++              (k) => !['address', 'name', 'autoConnect'].contains(k),
++            ) ||
++            device['address'] is! String ||
++            !RegExp(
++              r'^(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$',
++            ).hasMatch(device['address'] as String) ||
++            device['name'] is! String ||
++            (device['name'] as String).trim().isEmpty ||
++            (device.containsKey('autoConnect') &&
++                device['autoConnect'] is! bool)) {
++          throw const FormatException(
++            'invalid remembered device: expected Bluetooth MAC address, name, and optional boolean autoConnect',
++          );
++        }
++        final address = (device['address'] as String).toUpperCase();
++        if (!addresses.add(address)) {
++          throw const FormatException('duplicate remembered device address');
++        }
++        normalized.add(
++          Map<String, dynamic>.unmodifiable({
++            ...device,
++            'address': address,
++            'name': (device['name'] as String).trim(),
++          }),
++        );
++      }
++      values['rememberedDevices'] = List<Map<String, dynamic>>.unmodifiable(
++        normalized,
++      );
++    }
++    return StartupConfig._(Map<String, dynamic>.unmodifiable(values));
++  }
++
++  List<RememberedDevice>? get rememberedDevices {
++    final devices = values['rememberedDevices'] as List?;
++    return devices
++        ?.map(
++          (dynamic device) => RememberedDevice(
++            address: device['address'] as String,
++            name: device['name'] as String,
++            autoConnect: device['autoConnect'] as bool? ?? true,
++            rememberedAt: DateTime.fromMillisecondsSinceEpoch(0),
++          ),
++        )
++        .toList();
++  }
++}
+diff --git a/lib/services/startup_config_io.dart b/lib/services/startup_config_io.dart
+new file mode 100644
+index 0000000..ed160e9
+--- /dev/null
++++ b/lib/services/startup_config_io.dart
+@@ -0,0 +1,17 @@
++import 'dart:io';
++
++Future<String?> readStartupConfig({String? path}) async {
++  final explicit = path ?? Platform.environment['MOOSHREVOLT_CONFIG'];
++  if (explicit != null && explicit.trim().isEmpty) {
++    throw const FormatException('MOOSHREVOLT_CONFIG must not be empty');
++  }
++  if (explicit == null && !Platform.isLinux) return null;
++  final file = File(explicit ?? '/etc/moosh-revolt/config.json');
++  try {
++    return await file.readAsString();
++  } on FileSystemException catch (error) {
++    // Only an absent default is optional; permission and read errors fail closed.
++    if (explicit == null && error.osError?.errorCode == 2) return null;
++    rethrow;
++  }
++}
+diff --git a/lib/services/startup_config_stub.dart b/lib/services/startup_config_stub.dart
+new file mode 100644
+index 0000000..1b7f8dc
+--- /dev/null
++++ b/lib/services/startup_config_stub.dart
+@@ -0,0 +1,2 @@
++// Browser builds have no access to the device's /etc configuration.
++Future<String?> readStartupConfig({String? path}) async => null;
+diff --git a/test/startup_autoconnect_test.dart b/test/startup_autoconnect_test.dart
+new file mode 100644
+index 0000000..b99145a
+--- /dev/null
++++ b/test/startup_autoconnect_test.dart
+@@ -0,0 +1,139 @@
++import 'dart:async';
++import 'dart:convert';
++
++import 'package:flutter_test/flutter_test.dart';
++import 'package:moosh_revolt/services/settings_service.dart';
++import 'package:moosh_revolt/services/startup_autoconnect.dart';
++import 'package:moosh_revolt/services/startup_config.dart';
++import 'package:shared_preferences/shared_preferences.dart';
++import 'package:universal_ble/universal_ble.dart';
++
++void main() {
++  TestWidgetsFlutterBinding.ensureInitialized();
++  const target = 'AA:BB:CC:DD:EE:FF';
++  const disabled = '11:22:33:44:55:66';
++  late SettingsProvider settings;
++  late StreamController<BleDevice> events;
++  late List<BleDevice> system;
++  late int starts;
++  late int stops;
++
++  BleDevice device(String address, {String? name}) =>
++      BleDevice(deviceId: address, name: name);
++
++  setUp(() async {
++    SharedPreferences.setMockInitialValues({
++      'remembered_devices': jsonEncode([
++        {'address': target, 'name': 'Bench', 'autoConnect': true},
++        {'address': disabled, 'name': 'Disabled', 'autoConnect': false},
++      ]),
++    });
++    settings = SettingsProvider();
++    await settings.init(configuration: StartupConfig.parse({}));
++    events = StreamController<BleDevice>.broadcast(sync: true);
++    addTearDown(events.close);
++    system = [];
++    starts = stops = 0;
++  });
++
++  Future<BleDevice?> find({Future<void> Function()? start}) =>
++      findStartupDevice(
++        settings: settings,
++        systemDevices: () async => system,
++        scanStream: events.stream,
++        startScan: () async {
++          starts++;
++          await start?.call();
++        },
++        stopScan: () async {
++          stops++;
++        },
++        scanTimeout: const Duration(milliseconds: 40),
++      );
++
++  test(
++    'system devices match enabled addresses without requiring a name',
++    () async {
++      system = [
++        device(disabled, name: 'Mooshimeter'),
++        device(target.toLowerCase()),
++      ];
++      expect((await find())?.deviceId, target.toLowerCase());
++      expect(starts, 0);
++    },
++  );
++
++  test(
++    'scan ignores names and disabled targets and catches first advertisement',
++    () async {
++      system = [device(disabled, name: 'Mooshimeter')];
++      final result = await find(
++        start: () async {
++          events.add(device('00:00:00:00:00:01', name: 'Mooshimeter Bench'));
++          events.add(device(disabled, name: 'Mooshimeter'));
++          events.add(device(target.toLowerCase(), name: 'Renamed'));
++        },
++      );
++      expect(result?.deviceId, target.toLowerCase());
++      expect(starts, 1);
++      expect(stops, 1);
++      expect(events.hasListener, isFalse);
++    },
++  );
++
++  test('silent scan times out and releases the listener', () async {
++    expect(await find(), isNull);
++    expect(stops, 1);
++    expect(events.hasListener, isFalse);
++  });
++
++  test('unrelated advertisements cannot reset the total timeout', () async {
++    Timer? advertisements;
++    addTearDown(() => advertisements?.cancel());
++    expect(
++      await find(
++        start: () async {
++          advertisements = Timer.periodic(const Duration(milliseconds: 2), (_) {
++            events.add(device('00:00:00:00:00:01', name: 'Mooshimeter'));
++          });
++        },
++      ),
++      isNull,
++    );
++    expect(stops, 1);
++    expect(events.hasListener, isFalse);
++  });
++
++  test('a stuck startScan also respects the deadline', () async {
++    expect(await find(start: () => Completer<void>().future), isNull);
++    expect(stops, 1);
++    expect(events.hasListener, isFalse);
++  });
++
++  test('scan errors stop discovery and cancel the subscription', () async {
++    await expectLater(
++      find(
++        start: () async {
++          events.addError(StateError('transport unavailable'));
++        },
++      ),
++      throwsStateError,
++    );
++    expect(stops, 1);
++    expect(events.hasListener, isFalse);
++  });
++
++  test(
++    'disabled global or per-meter autoconnect never starts discovery',
++    () async {
++      settings.autoConnect = false;
++      expect(await find(), isNull);
++      settings.autoConnect = true;
++      await settings.toggleDeviceAutoConnect(target.toLowerCase());
++      expect(settings.getFirstRemembered(), isNull);
++      expect(await find(), isNull);
++      expect(starts, 0);
++      expect(stops, 0);
++    },
++  );
++}
+diff --git a/test/startup_config_test.dart b/test/startup_config_test.dart
+new file mode 100644
+index 0000000..92909d8
+--- /dev/null
++++ b/test/startup_config_test.dart
+@@ -0,0 +1,213 @@
++import 'dart:convert';
++import 'dart:io';
++
++import 'package:flutter/material.dart';
++import 'package:flutter_test/flutter_test.dart';
++import 'package:shared_preferences/shared_preferences.dart';
++import 'package:moosh_revolt/services/settings_service.dart';
++import 'package:moosh_revolt/services/startup_config.dart';
++
++void main() {
++  TestWidgetsFlutterBinding.ensureInitialized();
++  const address = 'AA:BB:CC:DD:EE:FF';
++  final savedDevices = jsonEncode([
++    {'address': '11:22:33:44:55:66', 'name': 'Saved', 'autoConnect': false},
++  ]);
++
++  setUp(() {
++    SharedPreferences.setMockInitialValues({
++      'autoconnect': false,
++      'skip_upgrade': false,
++      'sample_rate_hz': 250,
++      'graph_max_points': 500,
++      'dark_mode': false,
++      'show_floating_readings': false,
++      'language_code': 'fr',
++      'remembered_devices': savedDevices,
++    });
++  });
++
++  test(
++    'operator overrides saved settings without persisting on connection',
++    () async {
++      final prefs = await SharedPreferences.getInstance();
++      final before = {for (final key in prefs.getKeys()) key: prefs.get(key)};
++      final settings = SettingsProvider();
++      await settings.init(
++        configuration: StartupConfig.parse({
++          'schemaVersion': 1,
++          'autoConnect': true,
++          'skipUpgrade': true,
++          'sampleRateHz': 1000,
++          'graphMaxPoints': 1200,
++          'darkMode': true,
++          'showFloatingReadings': true,
++          'rememberedDevices': [
++            {'address': address, 'name': 'Bench meter'},
++          ],
++        }),
++      );
++      expect(settings.autoConnect, isTrue);
++      expect(settings.skipUpgrade, isTrue);
++      expect(settings.sampleRate, 1000);
++      expect(settings.graphMaxPoints, 1200);
++      expect(settings.themeMode, ThemeMode.dark);
++      expect(settings.showFloatingReadings, isTrue);
++      expect(
++        settings.getRemembered(address.toLowerCase())?.name,
++        'Bench meter',
++      );
++      expect(settings.rememberedDeviceCount, 1);
++      // DeviceScreen does this automatically after a successful connection.
++      await settings.rememberDevice(address.toLowerCase(), 'Advertised name');
++      expect(settings.rememberedDeviceCount, 1);
++      await settings.toggleDeviceAutoConnect(address.toLowerCase());
++      await settings.unrememberDevice(address.toLowerCase());
++      expect({for (final key in prefs.getKeys()) key: prefs.get(key)}, before);
++      final nextLaunch = SettingsProvider();
++      await nextLaunch.init(configuration: StartupConfig.parse({}));
++      expect(nextLaunch.sampleRate, 250);
++      expect(nextLaunch.rememberedDevices.single.name, 'Saved');
++    },
++  );
++
++  test(
++    'empty configuration preserves preferences and normal UI persistence',
++    () async {
++      final settings = SettingsProvider();
++      await settings.init(configuration: StartupConfig.parse({}));
++      expect(settings.sampleRate, 250);
++      expect(settings.themeMode, ThemeMode.light);
++      settings.sampleRate = 500;
++      await settings.rememberDevice(address, 'New');
++      final prefs = await SharedPreferences.getInstance();
++      expect(prefs.getInt('sample_rate_hz'), 500);
++      expect(jsonDecode(prefs.getString('remembered_devices')!), hasLength(2));
++    },
++  );
++
++  test('an explicit empty operator list replaces saved targets', () async {
++    final settings = SettingsProvider();
++    await settings.init(
++      configuration: StartupConfig.parse({'rememberedDevices': []}),
++    );
++    expect(settings.rememberedDevices, isEmpty);
++    expect(settings.getFirstRemembered(), isNull);
++  });
++
++  test('all supported sample rates and graph limits are accepted', () {
++    for (final rate in [125, 250, 500, 1000, 2000, 4000, 8000]) {
++      expect(
++        StartupConfig.parse({'sampleRateHz': rate}).values['sampleRateHz'],
++        rate,
++      );
++    }
++    for (final limit in [2, 100000]) {
++      expect(
++        StartupConfig.parse({'graphMaxPoints': limit}).values['graphMaxPoints'],
++        limit,
++      );
++    }
++  });
++
++  test('rejects malformed or unknown values rather than applying a subset', () {
++    for (final input in [
++      null,
++      [],
++      'text',
++      {'schemaVersion': 2},
++      {'schemaVersion': 1.0},
++      {'schemaVersion': null},
++      {'autoConnect': 'yes'},
++      {'autoConnect': null},
++      {'skipUpgrade': 1},
++      {'darkMode': 'dark'},
++      {'showFloatingReadings': 0},
++      {'sampleRateHz': 126},
++      {'sampleRateHz': 125.0},
++      {'graphMaxPoints': 1},
++      {'graphMaxPoints': 100001},
++      {'graphMaxPoints': 2.0},
++      {'unknown': true},
++      {'rememberedDevices': null},
++      {'rememberedDevices': {}},
++      {
++        'rememberedDevices': [
++          {'address': 'AA', 'name': 'Invalid address'},
++        ],
++      },
++      {
++        'rememberedDevices': [
++          {'address': address, 'name': ' '},
++        ],
++      },
++      {
++        'rememberedDevices': [
++          {'address': address, 'name': 'One', 'autoConnect': 'false'},
++        ],
++      },
++      {
++        'rememberedDevices': [
++          {'address': address, 'name': 'One', 'extra': true},
++        ],
++      },
++      {
++        'rememberedDevices': [
++          {'address': address, 'name': 'One'},
++          {'address': address.toLowerCase(), 'name': 'Two'},
++        ],
++      },
++    ]) {
++      expect(
++        () => StartupConfig.parse(input),
++        throwsFormatException,
++        reason: '$input',
++      );
++    }
++  });
++
++  test('parsed devices are immutable and detached from the input map', () {
++    final device = {'address': address.toLowerCase(), 'name': ' Bench '};
++    final config = StartupConfig.parse({
++      'rememberedDevices': [device],
++    });
++    device['name'] = 'Changed';
++    expect(config.rememberedDevices!.single.address, address);
++    expect(config.rememberedDevices!.single.name, 'Bench');
++    expect(() => config.values['autoConnect'] = true, throwsUnsupportedError);
++    expect(
++      () => config.values['rememberedDevices'][0]['name'] = 'Changed',
++      throwsUnsupportedError,
++    );
++  });
++
++  test(
++    'explicit config files load, and missing/invalid files fail closed',
++    () async {
++      final directory = await Directory.systemTemp.createTemp(
++        'moosh-config-test-',
++      );
++      addTearDown(() => directory.delete(recursive: true));
++      final file = File('${directory.path}/config.json');
++      await file.writeAsString('{"autoConnect": false, "sampleRateHz": 500}');
++      expect(
++        (await StartupConfig.load(path: file.path)).values['sampleRateHz'],
++        500,
++      );
++      await file.writeAsString('{broken');
++      await expectLater(
++        StartupConfig.load(path: file.path),
++        throwsFormatException,
++      );
++      await expectLater(
++        StartupConfig.load(path: '${directory.path}/missing'),
++        throwsA(isA<FileSystemException>()),
++      );
++      await expectLater(
++        StartupConfig.load(path: directory.path),
++        throwsA(isA<FileSystemException>()),
++      );
++      await expectLater(StartupConfig.load(path: ' '), throwsFormatException);
++    },
++  );
++}
+diff --git a/docs/operator-config.md b/docs/operator-config.md
+new file mode 100644
+index 0000000..a0869ac
+--- /dev/null
++++ b/docs/operator-config.md
+@@ -0,0 +1,110 @@
++# Operator startup configuration
++
++On Linux, MooshRevolt reads `/etc/moosh-revolt/config.json` at startup if it
++exists. Set `MOOSHREVOLT_CONFIG` to read a different file, for example:
++
++```sh
++MOOSHREVOLT_CONFIG=/data/config/moosh-revolt/config.json /usr/bin/mooshrevolt
++```
++
++The configuration is read once, validated completely, and applied after saved
++UI preferences. Omitted settings inherit saved preferences, then application
++defaults. It does not modify the JSON file or write operator overrides to saved
++preferences. Restart the app to reload changes.
++
++An absent default file is optional. An explicitly selected file must exist and
++be readable. Empty/whitespace-only `MOOSHREVOLT_CONFIG`, unreadable files,
++malformed JSON, and validation errors abort startup before the app starts
++discovery or connects to a meter. The app does not fall back to saved targets
++after a configuration error. The service journal receives the startup error.
++
++Other native platforms only read a file when `MOOSHREVOLT_CONFIG` is set. Web
++builds do not read the appliance's filesystem or environment.
++
++## Schema version 1
++
++All fields are optional. Unknown fields, explicit `null`, incorrect types,
++unsupported values, and duplicate device addresses are rejected. Settings use
++JSON booleans and integers, not strings.
++
++| Field | Accepted value | App default without saved preferences |
++| --- | --- | --- |
++| `schemaVersion` | Integer `1` | Version 1 |
++| `autoConnect` | Boolean | `true` |
++| `skipUpgrade` | Boolean | `false` |
++| `sampleRateHz` | Integer: `125`, `250`, `500`, `1000`, `2000`, `4000`, `8000` | `125` |
++| `graphMaxPoints` | Integer from `2` through `100000` | `300` |
++| `darkMode` | Boolean (`true`: dark, `false`: light) | `false` |
++| `showFloatingReadings` | Boolean | `false` |
++| `rememberedDevices` | Array of device objects; replaces the saved list | Empty list |
++
++`graphMaxPoints` bounds in-memory graph history in points per channel, not
++seconds or persistent logs. `skipUpgrade` exposes the existing UI preference;
++it does not add firmware upgrade execution or new channel configuration.
++
++Each device requires `address` and `name`. The address must be six hexadecimal
++octets separated by colons, such as `00:11:22:33:44:55`. Addresses are
++case-insensitive and normalized to uppercase. Names must be nonempty after
++trimming and are labels, never discovery selectors. Optional `autoConnect`
++must be a boolean and defaults to `true`. No other device fields are accepted.
++
++A safe initial appliance configuration is:
++
++```json
++{"schemaVersion": 1, "autoConnect": false, "rememberedDevices": []}
++```
++
++A preconfigured example (replace the illustrative address before enabling
++global autoconnect):
++
++```json
++{
++  "schemaVersion": 1,
++  "autoConnect": false,
++  "sampleRateHz": 125,
++  "graphMaxPoints": 300,
++  "darkMode": true,
++  "showFloatingReadings": false,
++  "rememberedDevices": [
++    {
++      "address": "00:11:22:33:44:55",
++      "name": "Bench meter",
++      "autoConnect": true
++    }
++  ]
++}
++```
++
++## Session and storage behavior
++
++When `rememberedDevices` is supplied, it replaces the entire effective list,
++including when it is `[]`. Automatic remembering after a connection and UI
++edits to that list remain session-only. Removing the operator file restores
++the original saved list. This prevents a routine connection from persisting
++operator targets or flags as user preferences.
++
++UI edits to individual scalar settings still use their existing persistence
++behavior. A configured value takes precedence again on the next launch; an
++omitted value uses its saved UI preference. The configuration is startup
++preconfiguration, not a locked policy or a complete channel/range preset.
++
++The `/data` partition, its mount dependency, permissions, journald limits, and
++service environment belong to the image integration. The config path alone
++does not relocate user preferences, screenshots, CSV exports, or logs.
++Linux preferences use `shared_preferences` via the XDG application-support
++directory: set `XDG_DATA_HOME` under `/data/state/moosh-revolt` in the app
++service environment; the plugin adds its application identifier or executable
++subdirectory. Verify the resulting path with the selected image/plugin version.
++CSV and screenshots use the XDG documents directory; configure that separately
++if they must live on `/data`. Journald handles stdout/stderr independently.
++
++## Validation
++
++```sh
++flutter analyze
++flutter test
++```
++
++`test/startup_config_test.dart` covers precedence, validation, explicit-file
++failures, unchanged saved preferences after automatic remembering, and normal
++UI persistence without an operator device list.
+diff --git a/docs/startup-autoconnect.md b/docs/startup-autoconnect.md
+new file mode 100644
+index 0000000..baac394
+--- /dev/null
++++ b/docs/startup-autoconnect.md
+@@ -0,0 +1,43 @@
++# Startup autoconnect regression evidence
++
++Affected code: `e37be6621f02fd6303f9ae67006a7e57f826f532` and the local
++pre-fix `1ff8af9` tree. These are application startup-selection bugs, not
++defects established in `universal_ble` or the Linux Bluetooth stack.
++
++## Reproductions and expected behavior
++
++1. Remember meter A with autoconnect enabled; advertise meter B with a name
++   containing `mooshim`. The old scan accepts B by name. Startup must select
++   only a remembered, enabled address, case-insensitively, regardless of name.
++2. Mark a remembered device `autoConnect: false` and return it from system
++   devices. The old system-device branch still connects. Disabled devices must
++   never be selected automatically.
++3. Disable autoconnect on every remembered device. The old
++   `getFirstRemembered()` falls back to the first disabled entry. It must return
++   `null` when no enabled entry exists.
++4. Start discovery with no matching advertisements, or continuously advertise
++   unrelated devices. The old `await for` has no five-second deadline. The scan
++   must stop after one overall five-second window, release its subscription,
++   and request platform scan cleanup. Unrelated events must not restart the
++   deadline. System-device lookup and platform scan cleanup have their own
++   bounded waits, so total startup time can exceed five seconds.
++
++The startup scan listener is registered before calling `startScan`, so the first
++advertisement is not lost. ScanScreen is mounted after startup discovery ends,
++preventing its automatic scan from competing with that discovery. When multiple
++remembered meters are enabled, an exact matching system device is preferred;
++otherwise the first matching scan advertisement wins. Names never select a
++startup target. Manual device selection remains available after discovery.
++
++`test/startup_autoconnect_test.dart` reproduces the selection and deadline
++cases using injected transport operations, with no real BLE hardware. It also
++covers scan errors and a stalled platform `startScan` call.
++
++## Existing report search
++
++Public GitHub issue searches for this repository and autoconnect did not return
++an equivalent report during this investigation. A direct `gh issue list`
++attempt failed with HTTP 401, so the issue inventory could not be verified
++completely. No issue was filed and no remote changes were made. These focused
++application fixes and tests are suitable for submission to the app repository;
++there is no dependency workaround to retain or upstream dependency fix to drop.
