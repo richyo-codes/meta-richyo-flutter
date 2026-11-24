@@ -1,74 +1,47 @@
-# Personal Flutter projects
+# meta-richyo-flutter
 
-`meta-richyo-flutter` tracks Rich Young's Flutter applications and custom
-engine work. This standalone layer targets Yocto Project Wrynose. It currently depends only on OE-Core, with
-Wrynose compatibility. It defines no board, distro, or default engine policy.
-Layer metadata is MIT licensed; fetched projects retain their own licenses.
+Yocto Project Wrynose layer for Richard Young’s embedded Linux Flutter
+applications, with flutter-pi recipes and desktop packages. The layer metadata is MIT licensed. Each project retains its own license.
 
-Add this layer to a **new or idle** build environment:
+## Add the layer
 
-```bash
+From an initialized BitBake build environment, run:
+
+```sh
 bitbake-layers add-layer /path/to/meta-richyo-flutter
-bitbake personal-flutter-projects
-bitbake pcalc-express-source -c unpack
-bitbake flutter-gtk4-source -c unpack
 ```
 
-`personal-flutter-projects` installs the versioned registry at
-`/usr/share/richyo-flutter/projects.json`. Optionally include it in an image:
+OE-Core is the base dependency. Enable meta-flutter for the flutter-pi recipes
+and meta-oe for the BoomPrint desktop package.
 
-```conf
-IMAGE_INSTALL:append = " personal-flutter-projects"
-```
+## Embedded Linux with flutter-pi
 
-The two `-source` recipes fetch pinned Git revisions; they produce no runtime
-packages and do not build an app, SDK, or engine. Unpacking pcalc does not fetch
-its pub dependencies. Those remain tracked in the upstream lockfile, with the
-custom Git dependencies recorded in the registry for integration planning.
+### MooshRevolt
 
-## Applications and engine work
+The app repository carries its own Yocto recipe. Builds that still use the
+older pinned recipe can enable this layer’s temporary operator-config backport.
+The image’s service configuration selects the on-device JSON file used for
+settings and startup autoconnect. [MooshRevolt](https://github.com/richyo-codes/moosh-revolt-multimeter) · [Backport instructions](operator-config.md)
 
-- [pcalc-express](https://github.com/richyo-codes/pcalc-express) has GTK3/GTK4
-  Linux runners, a path dependency on its expression engine, custom Git plugins,
-  and native expression backends. Its source license is AGPL-3.0-only.
-- [Flutter GTK4 PR #193405](https://github.com/flutter/flutter/pull/193405)
-  is tracked by exact fork revision. It was an open draft at the recorded
-  review date. GTK4 is opt-in through `--linux-gtk=gtk4`.
-- MooshRevolt remains in `meta-embedded-images` during active board builds.
-  This registry references its existing recipe rather than duplicating it.
+### BoomPrint
 
-The PR head and pcalc's documented CI framework pin are **different revisions**.
-The registry preserves both; neither implies an ABI-compatible SDK/engine pair.
-The prebuilt engine ID is informational, not a checksum or a fetchable Yocto
-artifact declaration. Upstream documents an artifact being republished under
-the same ID, so future prebuilt recipes must pin archive SHA-256 checksums.
+On Orange Pi Zero 3, the experimental `boomprint-flutter-pi` target builds
+from pinned Dart sources against the image’s Flutter engine. The build requires
+mpv and FFmpeg. Review their Yocto `commercial` license flags before enabling them. Build with `bitbake boomprint-flutter-pi` and include
+`boomprint-flutter-pi` in the test image. Its launcher uses the direct DRM
+embedder. Test on a free display, with the existing kiosk app stopped.
+Camera preview requires the media_kit_video platform channel and a working
+embedder texture implementation. The GTK plugin in the desktop release
+cannot register that channel with flutter-pi.
 
-## Desktop integration still required
+### pcalc-express
 
-The existing meta-flutter `flutter-app` class builds an application bundle for
-an external embedder. It does not build pcalc's GTK desktop runner. The pinned
-meta-flutter desktop engine configuration uses GTK3. Enabling its desktop
-option alone does not enable this GTK4 fork.
+The experimental ARM64 `pcalc-express` recipe targets flutter-pi and requires
+meta-flutter with `flutter-app-native`. Build it with `bitbake pcalc-express`.
 
-The next implementation needs a matched fork SDK, target engine, host
-`gen_snapshot`, GTK4 headers/libraries, desktop runner and plugin compilation,
-and the native expression backends. Start with x86-64 QEMU and a desktop or
-Wayland compositor; verify the binary loads GTK4 without GTK3 and that native
-plugins and expression evaluation work before adding ARM64 board images.
-For direct rendering on ARM64, the experimental `pcalc-express` recipe
-uses the flutter-pi embedder and requires meta-flutter with `flutter-app-native`.
+## Desktop builds and engine work
 
-[Remote UI options](remote-ui.md) compares web/Wasm with native WayVNC access
-and identifies the additional runtime/backend integration each requires.
-
-[MooshRevolt operator configuration](operator-config.md) enables a tested,
-opt-in startup-config backport for the existing pinned app recipe.
-
-Keep application recipes here, image composition in `meta-embedded-images`,
-and board support in the existing BSP layers. Keep independently upstreamable
-meta-flutter or engine fixes separate from personal application integration.
-
-## Flutter Servo browser
+### Flutter Servo browser
 
 With this layer enabled, run `bitbake flutter-servo-browser` in an x86-64
 glibc desktop build with OpenGL and GTK Wayland or X11 support. Add
@@ -79,7 +52,7 @@ matching GTK3 plugin, Flutter engine and native Rust library.
 The recipes package the pinned upstream v0.1.1 Linux GTK3 release. An ARM64
 Orange Pi build requires native ARM64 artifacts or a source cross-build.
 
-## BoomPrint
+### BoomPrint GTK3
 
 Add `boomprint` to `IMAGE_INSTALL` in an x86-64 glibc desktop build with
 this layer and meta-oe. Run `boomprint` in the graphical session. The
@@ -88,15 +61,20 @@ and FTP uses libcurl. Provide a session Secret Service such as GNOME Keyring
 for credential storage. Orange Pi requires an ARM64 build of the application.
 
 The pinned meta-oe mpv recipe carries Yocto's `commercial` license flag.
-The stock kiosk configuration stops at dependency resolution until the
-operator reviews and accepts the applicable media package flags.
+Review and accept the applicable mpv and FFmpeg flags in the build configuration.
 
-For an Orange Pi Zero 3 with meta-flutter enabled, the separate experimental
-`boomprint-flutter-pi` target builds from pinned Dart sources against the
-image's Flutter engine. The normal build requires the mpv and FFmpeg license
-flags described above. Build with `bitbake boomprint-flutter-pi` and include
-`boomprint-flutter-pi` in the test image. Its launcher uses the direct DRM
-embedder. Test on a free display, with the existing kiosk app stopped.
-Camera preview requires the media_kit_video platform channel and a working
-embedder texture implementation. The GTK plugin in the desktop release
-cannot register that channel with flutter-pi.
+### Flutter GTK4 and pcalc
+
+A GTK4 desktop build still requires a
+matched Flutter SDK, engine, and host `gen_snapshot`, plus the GTK4 runner and
+native plugins. The Flutter fork uses `--linux-gtk=gtk4`. [pcalc-express](https://github.com/richyo-codes/pcalc-express) · [Flutter GTK4 PR](https://github.com/flutter/flutter/pull/193405)
+
+The `pcalc-express-source` and `flutter-gtk4-source` targets fetch pinned sources.
+Run `bitbake <target> -c unpack` to inspect them.
+
+## Project inventory
+
+The optional `personal-flutter-projects` package installs a snapshot of project
+metadata at `/usr/share/richyo-flutter/projects.json`. Use the recipes to check
+the revisions BitBake builds. See the [remote UI notes](remote-ui.md) for WayVNC
+and web/Wasm options.
