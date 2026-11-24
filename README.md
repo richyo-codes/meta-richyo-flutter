@@ -67,3 +67,14 @@ opt-in startup-config backport for the existing pinned app recipe.
 Keep application recipes here, image composition in `meta-embedded-images`,
 and board support in the existing BSP layers. Keep independently upstreamable
 meta-flutter or engine fixes separate from personal application integration.
+
+## Flutter Servo browser
+
+With this layer enabled, run `bitbake flutter-servo-browser` in an x86-64
+glibc desktop build with OpenGL and GTK Wayland or X11 support. Add
+`flutter-servo-browser` to `IMAGE_INSTALL` and launch `flutter-servo-browser`
+inside the graphical session. Its `flutter-servo` dependency installs the
+matching GTK3 plugin, Flutter engine and native Rust library.
+
+The recipes package the pinned upstream v0.1.1 Linux GTK3 release. An ARM64
+Orange Pi build requires native ARM64 artifacts or a source cross-build.
