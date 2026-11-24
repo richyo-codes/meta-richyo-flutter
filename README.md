@@ -78,3 +78,13 @@ matching GTK3 plugin, Flutter engine and native Rust library.
 
 The recipes package the pinned upstream v0.1.1 Linux GTK3 release. An ARM64
 Orange Pi build requires native ARM64 artifacts or a source cross-build.
+
+To build the dedicated Weston kiosk VM from the workspace root:
+
+```sh
+builds="$(realpath ../yocto-builds)"
+bitbake/bin/bitbake-setup --setting default top-dir-prefix "$(dirname "$builds")" --setting default top-dir-name "$(basename "$builds")" init ./flutter-servo-kiosk.conf.json qemux86-64 --non-interactive --no-init-vscode
+. "$builds/flutter-servo-kiosk-qemux86-64/build/init-build-env"
+bitbake flutter-servo-kiosk-image
+runqemu qemux86-64 flutter-servo-kiosk-image ext4 slirp gtk
+```
