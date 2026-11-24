@@ -76,5 +76,4 @@ Run `bitbake <target> -c unpack` to inspect them.
 
 The optional `personal-flutter-projects` package installs a snapshot of project
 metadata at `/usr/share/richyo-flutter/projects.json`. Use the recipes to check
-the revisions BitBake builds. See the [remote UI notes](remote-ui.md) for WayVNC
-and web/Wasm options.
+the revisions BitBake builds.
