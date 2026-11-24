@@ -1,0 +1,14 @@
+Subject: [PATCH] Include external media-kit backend when selected
+
+Upstream-Status: Inappropriate [local experimental integration]
+
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -548,3 +548,7 @@
+   add_subdirectory(third_party)
+   add_subdirectory(test)
+ endif()
++
++if(MEDIA_KIT_FLUTTER_PI_DIR)
++  add_subdirectory("${MEDIA_KIT_FLUTTER_PI_DIR}" media-kit-video)
++endif()
