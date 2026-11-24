@@ -1,8 +1,7 @@
 # Personal Flutter projects
 
 `meta-richyo-flutter` tracks Rich Young's Flutter applications and custom
-engine work. It is a separate Yocto layer in this repository, ready to extract
-into its own repository later. It currently depends only on OE-Core, with
+engine work. This standalone layer targets Yocto Project Wrynose. It currently depends only on OE-Core, with
 Wrynose compatibility. It defines no board, distro, or default engine policy.
 Layer metadata is MIT licensed; fetched projects retain their own licenses.
 
@@ -56,7 +55,8 @@ The next implementation needs a matched fork SDK, target engine, host
 and the native expression backends. Start with x86-64 QEMU and a desktop or
 Wayland compositor; verify the binary loads GTK4 without GTK3 and that native
 plugins and expression evaluation work before adding ARM64 board images.
-No GTK4 image or pcalc executable is supplied by this initial tracking layer.
+For direct rendering on ARM64, the experimental `pcalc-express` recipe
+uses the flutter-pi embedder and requires meta-flutter with `flutter-app-native`.
 
 [Remote UI options](remote-ui.md) compares web/Wasm with native WayVNC access
 and identifies the additional runtime/backend integration each requires.
@@ -78,16 +78,6 @@ matching GTK3 plugin, Flutter engine and native Rust library.
 
 The recipes package the pinned upstream v0.1.1 Linux GTK3 release. An ARM64
 Orange Pi build requires native ARM64 artifacts or a source cross-build.
-
-To build the dedicated Weston kiosk VM from the workspace root:
-
-```sh
-builds="$(realpath ../yocto-builds)"
-bitbake/bin/bitbake-setup --setting default top-dir-prefix "$(dirname "$builds")" --setting default top-dir-name "$(basename "$builds")" init ./flutter-servo-kiosk.conf.json qemux86-64 --non-interactive --no-init-vscode
-. "$builds/flutter-servo-kiosk-qemux86-64/build/init-build-env"
-bitbake flutter-servo-kiosk-image
-runqemu qemux86-64 flutter-servo-kiosk-image ext4 slirp gtk
-```
 
 ## BoomPrint
 

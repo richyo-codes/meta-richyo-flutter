@@ -14,12 +14,10 @@ Alternatively, require the fragment by absolute path in `conf/local.conf`.
 It adds a recipe-scoped source patch; it does not change the Flutter engine or
 enable a startup service. The patch targets app commit
 `e37be6621f02fd6303f9ae67006a7e57f826f532`. Review/remove it when adopting the
-app-side implementation upstream. The two app trees were coordinated with the
-existing Herdr Mooshimeter agent; the backport omits unrelated localization.
+app-side implementation upstream.
 
 On Linux the app reads optional `/etc/moosh-revolt/config.json`. An explicit
-`MOOSHREVOLT_CONFIG` path must exist and be readable. The
-[persistent SD profile](../docs/appliance-state.md) sets it to
+`MOOSHREVOLT_CONFIG` path must exist and be readable. An appliance with a persistent data partition can set it to
 `/data/config/moosh-revolt/config.json` for the app's systemd services.
 For interactive launches, export that variable yourself.
 
