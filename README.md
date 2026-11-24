@@ -88,3 +88,25 @@ bitbake/bin/bitbake-setup --setting default top-dir-prefix "$(dirname "$builds")
 bitbake flutter-servo-kiosk-image
 runqemu qemux86-64 flutter-servo-kiosk-image ext4 slirp gtk
 ```
+
+## BoomPrint
+
+Add `boomprint` to `IMAGE_INSTALL` in an x86-64 glibc desktop build with
+this layer and meta-oe. Run `boomprint` in the graphical session. The
+recipe packages the v0.3.1 GTK3 Linux release. Printer video uses libmpv
+and FTP uses libcurl. Provide a session Secret Service such as GNOME Keyring
+for credential storage. Orange Pi requires an ARM64 build of the application.
+
+The pinned meta-oe mpv recipe carries Yocto's `commercial` license flag.
+The stock kiosk configuration stops at dependency resolution until the
+operator reviews and accepts the applicable media package flags.
+
+For an Orange Pi Zero 3 with meta-flutter enabled, the separate experimental
+`boomprint-flutter-pi` target builds from pinned Dart sources against the
+image's Flutter engine. The normal build requires the mpv and FFmpeg license
+flags described above. Build with `bitbake boomprint-flutter-pi` and include
+`boomprint-flutter-pi` in the test image. Its launcher uses the direct DRM
+embedder. Test on a free display, with the existing kiosk app stopped.
+Camera preview requires the media_kit_video platform channel and a working
+embedder texture implementation. The GTK plugin in the desktop release
+cannot register that channel with flutter-pi.
